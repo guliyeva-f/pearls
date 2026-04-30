@@ -1,3 +1,4 @@
+import 'dart:math';
 import 'package:flutter/material.dart';
 import '../models/quote.dart';
 import '../services/storage_service.dart';
@@ -14,10 +15,14 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final StorageService _storage = StorageService();
   final ExportImportService _exportImport = ExportImportService();
+  final TextEditingController _searchController = TextEditingController();
 
   List<Quote> _quotes = [];
   String? _selectedTag;
   bool _showFavourites = false;
+  bool _isSearching = false;
+  String _searchQuery = '';
+  bool _hasShownDailyQuote = false;
 
   @override
   void initState() {
@@ -25,9 +30,21 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadQuotes();
   }
 
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadQuotes() async {
     final quotes = await _storage.loadQuotes();
     setState(() => _quotes = quotes);
+    if (!_hasShownDailyQuote && quotes.isNotEmpty && mounted) {
+      _hasShownDailyQuote = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _showDailyQuoteDialog();
+      });
+    }
   }
 
   Map<String, int> get _tagCounts {
@@ -47,6 +64,12 @@ class _HomeScreenState extends State<HomeScreen> {
     return _quotes.where((q) {
       if (_showFavourites && !q.isFavourite) return false;
       if (_selectedTag != null && !q.tags.contains(_selectedTag)) return false;
+      if (_searchQuery.isNotEmpty) {
+        final query = _searchQuery.toLowerCase();
+        final textMatch = q.text.toLowerCase().contains(query);
+        final tagMatch = q.tags.any((t) => t.toLowerCase().contains(query));
+        if (!textMatch && !tagMatch) return false;
+      }
       return true;
     }).toList();
   }
@@ -64,10 +87,207 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _importQuotes() async {
     final imported = await _exportImport.importQuotes();
     if (imported.isEmpty) return;
-    for (final q in imported) {
-      await _storage.addQuote(q);
-    }
+    await _storage.addQuotes(imported);
     _loadQuotes();
+  }
+
+  void _startSearch() {
+    setState(() => _isSearching = true);
+  }
+
+  void _stopSearch() {
+    setState(() {
+      _isSearching = false;
+      _searchQuery = '';
+      _searchController.clear();
+    });
+  }
+
+  Widget _buildHighlightedText(String text, String query, TextStyle style) {
+    if (query.isEmpty) return Text(text, style: style);
+    final lowerText = text.toLowerCase();
+    final lowerQuery = query.toLowerCase();
+    if (!lowerText.contains(lowerQuery)) return Text(text, style: style);
+
+    final spans = <TextSpan>[];
+    int start = 0;
+    int index = lowerText.indexOf(lowerQuery);
+
+    while (index != -1) {
+      if (index > start) {
+        spans.add(TextSpan(text: text.substring(start, index), style: style));
+      }
+      spans.add(
+        TextSpan(
+          text: text.substring(index, index + query.length),
+          style: style.copyWith(
+            backgroundColor: const Color(0xFFDEB96A).withValues(alpha: 0.35),
+            fontWeight: FontWeight.w600,
+            color: const Color(0xFF2E2418),
+          ),
+        ),
+      );
+      start = index + query.length;
+      index = lowerText.indexOf(lowerQuery, start);
+    }
+
+    if (start < text.length) {
+      spans.add(TextSpan(text: text.substring(start), style: style));
+    }
+
+    return RichText(text: TextSpan(children: spans));
+  }
+
+  void _showDailyQuoteDialog() {
+    if (_quotes.isEmpty) return;
+    final random = Random();
+    int currentIndex = random.nextInt(_quotes.length);
+
+    showDialog(
+      context: context,
+      barrierColor: Colors.black.withValues(alpha: 0.4),
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            final quote = _quotes[currentIndex];
+            return Dialog(
+              backgroundColor: const Color(0xFFFAF7F2),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(24),
+              ),
+              insetPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 24,
+              ),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(context).size.height * 0.80,
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 18, 18, 16),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Row(
+                        children: [
+                          Text('🤍', style: TextStyle(fontSize: 20)),
+                          Text(
+                            ' Günün incisi ',
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFF3A2E1E),
+                            ),
+                          ),
+                          Text('🤍 ', style: TextStyle(fontSize: 20)),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      Flexible(
+                        child: Container(
+                          width: double.infinity,
+                          padding: const EdgeInsets.all(16),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF0EBE0),
+                            borderRadius: BorderRadius.circular(16),
+                          ),
+                          child: SingleChildScrollView(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  quote.text,
+                                  style: const TextStyle(
+                                    fontSize: 16,
+                                    color: Color.fromARGB(255, 26, 21, 14),
+                                    height: 1.6,
+                                  ),
+                                ),
+                                if (quote.tags.isNotEmpty) ...[
+                                  const SizedBox(height: 10),
+                                  Wrap(
+                                    spacing: 6,
+                                    children: quote.tags
+                                        .map(
+                                          (t) => Text(
+                                            '#$t',
+                                            style: const TextStyle(
+                                              fontSize: 12,
+                                              color: Color(0xFFA0906E),
+                                            ),
+                                          ),
+                                        )
+                                        .toList(),
+                                  ),
+                                ],
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          GestureDetector(
+                            onTap: () {
+                              int newIndex;
+                              do {
+                                newIndex = random.nextInt(_quotes.length);
+                              } while (newIndex == currentIndex &&
+                                  _quotes.length > 1);
+                              setDialogState(() => currentIndex = newIndex);
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: const Color(0xFFE8E0D0),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.shuffle_rounded,
+                                    size: 16,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF6B5C48),
+                                  ),
+                                  SizedBox(width: 6),
+                                  Text(
+                                    'Dəyiş',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w600,
+                                      color: Color.fromARGB(255, 74, 63, 49),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          TextButton(
+                            onPressed: () => Navigator.pop(context),
+                            style: TextButton.styleFrom(
+                              foregroundColor: const Color(0xFF6B5C48),
+                            ),
+                            child: const Text('Bağla'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
   Widget _buildChip(String label, bool selected, VoidCallback onTap) {
@@ -82,7 +302,27 @@ class _HomeScreenState extends State<HomeScreen> {
         child: Text(
           label,
           style: TextStyle(
-            fontSize: 13,
+            fontSize: 14,
+            color: selected ? const Color(0xFFFAF7F2) : const Color(0xFF6B5C48),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSheetChip(String label, bool selected, VoidCallback onTap) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: selected ? const Color(0xFF6B5C48) : const Color(0xFFE8E0D0),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 14,
             color: selected ? const Color(0xFFFAF7F2) : const Color(0xFF6B5C48),
           ),
         ),
@@ -144,17 +384,20 @@ class _HomeScreenState extends State<HomeScreen> {
                               Navigator.pop(context);
                             },
                           ),
-                          ...tagCounts.entries.map((e) => _buildSheetChip(
-                                '#${e.key} (${e.value})',
-                                _selectedTag == e.key,
-                                () {
-                                  setState(() {
-                                    _selectedTag =
-                                        _selectedTag == e.key ? null : e.key;
-                                  });
-                                  Navigator.pop(context);
-                                },
-                              )),
+                          ...tagCounts.entries.map(
+                            (e) => _buildSheetChip(
+                              '#${e.key} (${e.value})',
+                              _selectedTag == e.key,
+                              () {
+                                setState(() {
+                                  _selectedTag = _selectedTag == e.key
+                                      ? null
+                                      : e.key;
+                                });
+                                Navigator.pop(context);
+                              },
+                            ),
+                          ),
                         ],
                       ),
                     ),
@@ -168,60 +411,73 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildSheetChip(String label, bool selected, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-        decoration: BoxDecoration(
-          color: selected ? const Color(0xFF6B5C48) : const Color(0xFFE8E0D0),
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 14,
-            color: selected ? const Color(0xFFFAF7F2) : const Color(0xFF6B5C48),
-          ),
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final tagCounts = _tagCounts;
-    final topTags = tagCounts.entries.take(2).toList();
+    final topTags = tagCounts.entries.take(3).toList();
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Pearls'),
+        title: _isSearching
+            ? TextField(
+                controller: _searchController,
+                autofocus: true,
+                style: const TextStyle(color: Color(0xFF2E2418), fontSize: 16),
+                decoration: const InputDecoration(
+                  hintText: 'Axtar...',
+                  hintStyle: TextStyle(color: Color(0xFFA0906E)),
+                  border: InputBorder.none,
+                  enabledBorder: InputBorder.none,
+                  focusedBorder: InputBorder.none,
+                  filled: false,
+                  isDense: true,
+                  contentPadding: EdgeInsets.zero,
+                ),
+                onChanged: (value) =>
+                    setState(() => _searchQuery = value.trim()),
+              )
+            : const Text('Pearls'),
         actions: [
-          IconButton(
-            icon: Icon(
-              _showFavourites ? Icons.favorite : Icons.favorite_border,
-              color: _showFavourites
-                  ? const Color(0xFFC9785A)
-                  : const Color(0xFF6B5C48),
+          if (_isSearching)
+            IconButton(
+              icon: const Icon(Icons.close, color: Color(0xFF6B5C48)),
+              onPressed: _stopSearch,
+            )
+          else ...[
+            IconButton(
+              icon: const Icon(Icons.search_rounded, color: Color(0xFF6B5C48)),
+              onPressed: _startSearch,
             ),
-            onPressed: () => setState(() => _showFavourites = !_showFavourites),
-          ),
-          IconButton(
-            icon: const Icon(Icons.upload_outlined, color: Color(0xFF6B5C48)),
-            onPressed: _exportQuotes,
-          ),
-          IconButton(
-            icon: const Icon(Icons.download_outlined, color: Color(0xFF6B5C48)),
-            onPressed: _importQuotes,
-          ),
+            IconButton(
+              icon: Icon(
+                _showFavourites ? Icons.favorite : Icons.favorite_border,
+                color: _showFavourites
+                    ? const Color(0xFFC9785A)
+                    : const Color(0xFF6B5C48),
+              ),
+              onPressed: () =>
+                  setState(() => _showFavourites = !_showFavourites),
+            ),
+            IconButton(
+              icon: const Icon(Icons.upload_outlined, color: Color(0xFF6B5C48)),
+              onPressed: _exportQuotes,
+            ),
+            IconButton(
+              icon: const Icon(
+                Icons.download_outlined,
+                color: Color(0xFF6B5C48),
+              ),
+              onPressed: _importQuotes,
+            ),
+          ],
         ],
       ),
       body: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          if (tagCounts.isNotEmpty)
+          if (tagCounts.isNotEmpty && !_isSearching)
             Container(
-                width: double.infinity,
+              width: double.infinity,
               color: const Color(0xFFF0EBE0),
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
               child: SingleChildScrollView(
@@ -236,24 +492,27 @@ class _HomeScreenState extends State<HomeScreen> {
                         _showFavourites = false;
                       }),
                     ),
-                    ...topTags.map((e) => Padding(
-                          padding: const EdgeInsets.only(left: 8),
-                          child: _buildChip(
-                            '#${e.key} (${e.value})',
-                            _selectedTag == e.key,
-                            () => setState(() {
-                              _selectedTag =
-                                  _selectedTag == e.key ? null : e.key;
-                            }),
-                          ),
-                        )),
-                    if (tagCounts.length > 5) ...[
+                    ...topTags.map(
+                      (e) => Padding(
+                        padding: const EdgeInsets.only(left: 8),
+                        child: _buildChip(
+                          '#${e.key} (${e.value})',
+                          _selectedTag == e.key,
+                          () => setState(() {
+                            _selectedTag = _selectedTag == e.key ? null : e.key;
+                          }),
+                        ),
+                      ),
+                    ),
+                    if (tagCounts.length > 3) ...[
                       const SizedBox(width: 8),
                       GestureDetector(
                         onTap: _showAllTagsSheet,
                         child: Container(
                           padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 6),
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
                           decoration: BoxDecoration(
                             color: const Color(0xFFFAF7F2),
                             borderRadius: BorderRadius.circular(20),
@@ -274,7 +533,7 @@ class _HomeScreenState extends State<HomeScreen> {
                               ),
                               const SizedBox(width: 4),
                               Text(
-                                '${tagCounts.length - 5}',
+                                '${tagCounts.length - 3}',
                                 style: const TextStyle(
                                   fontSize: 12,
                                   color: Color(0xFFA0906E),
@@ -291,10 +550,12 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           Expanded(
             child: _filtered.isEmpty
-                ? const Center(
+                ? Center(
                     child: Text(
-                      'Hələ inci yoxdur 🤍',
-                      style: TextStyle(
+                      _searchQuery.isNotEmpty
+                          ? 'Nəticə tapılmadı 🔍'
+                          : 'Hələ inci yoxdur 🤍',
+                      style: const TextStyle(
                         color: Color(0xFFA0906E),
                         fontSize: 16,
                       ),
@@ -303,11 +564,13 @@ class _HomeScreenState extends State<HomeScreen> {
                 : ListView.separated(
                     padding: const EdgeInsets.fromLTRB(20, 16, 20, 80),
                     itemCount: _filtered.length,
-                    separatorBuilder: (_, _) => CustomPaint(
-                      painter: _DashedLinePainter(),
-                    ),
+                    separatorBuilder: (_, _) =>
+                        CustomPaint(painter: _DashedLinePainter()),
                     itemBuilder: (context, index) {
                       final quote = _filtered[index];
+                      final highlightQuery = _searchQuery.isNotEmpty
+                          ? _searchQuery
+                          : (_selectedTag ?? '');
                       return InkWell(
                         onTap: () async {
                           await Navigator.push(
@@ -327,9 +590,10 @@ class _HomeScreenState extends State<HomeScreen> {
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    Text(
+                                    _buildHighlightedText(
                                       quote.text,
-                                      style: const TextStyle(
+                                      highlightQuery,
+                                      const TextStyle(
                                         fontSize: 16,
                                         color: Color(0xFF2E2418),
                                         height: 1.5,
@@ -339,15 +603,28 @@ class _HomeScreenState extends State<HomeScreen> {
                                       const SizedBox(height: 8),
                                       Wrap(
                                         spacing: 6,
-                                        children: quote.tags
-                                            .map((t) => Text(
-                                                  '#$t',
-                                                  style: const TextStyle(
-                                                    fontSize: 12,
-                                                    color: Color(0xFFA0906E),
-                                                  ),
-                                                ))
-                                            .toList(),
+                                        children: quote.tags.map((t) {
+                                          final isTagMatch =
+                                              highlightQuery.isNotEmpty &&
+                                              t.toLowerCase().contains(
+                                                highlightQuery.toLowerCase(),
+                                              );
+                                          return Text(
+                                            '#$t',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              color: const Color(0xFFA0906E),
+                                              backgroundColor: isTagMatch
+                                                  ? const Color(
+                                                      0xFFDEB96A,
+                                                    ).withValues(alpha: 0.35)
+                                                  : null,
+                                              fontWeight: isTagMatch
+                                                  ? FontWeight.w600
+                                                  : FontWeight.normal,
+                                            ),
+                                          );
+                                        }).toList(),
                                       ),
                                     ],
                                   ],
@@ -375,18 +652,32 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      floatingActionButton: Tooltip(
-        message: '🤍',
-        child: FloatingActionButton(
-          onPressed: () async {
-            await Navigator.push(
-              context,
-              MaterialPageRoute(builder: (_) => const AddEditScreen()),
-            );
-            _loadQuotes();
-          },
-          child: const Icon(Icons.add),
-        ),
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          FloatingActionButton(
+            heroTag: 'daily',
+            onPressed: _showDailyQuoteDialog,
+            backgroundColor: const Color(0xFFC9785A),
+            foregroundColor: const Color(0xFF6B5C48),
+            elevation: 2,
+            child: const Text('✨', style: TextStyle(fontSize: 20)),
+          ),
+          const SizedBox(height: 12),
+          FloatingActionButton(
+            heroTag: 'add',
+            backgroundColor: const Color(0xFFF0EBE0),
+            foregroundColor: const Color(0xFF6B5C48),
+            onPressed: () async {
+              await Navigator.push(
+                context,
+                MaterialPageRoute(builder: (_) => const AddEditScreen()),
+              );
+              _loadQuotes();
+            },
+            child: const Icon(Icons.add),
+          ),
+        ],
       ),
     );
   }

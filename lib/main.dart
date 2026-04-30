@@ -24,6 +24,7 @@ class PearlsApp extends StatelessWidget {
           backgroundColor: Color(0xFFF0EBE0),
           foregroundColor: Color(0xFF3A2E1E),
           elevation: 0,
+            scrolledUnderElevation: 0,
           centerTitle: false,
           titleTextStyle: TextStyle(
             color: Color(0xFF3A2E1E),

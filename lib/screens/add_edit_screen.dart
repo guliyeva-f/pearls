@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../models/quote.dart';
 import '../services/storage_service.dart';
 
@@ -19,6 +20,15 @@ class _AddEditScreenState extends State<AddEditScreen> {
   List<String> _tags = [];
 
   bool get _isEditing => widget.quote != null;
+
+  String _formatDate(DateTime dt) {
+    final d = dt.day.toString().padLeft(2, '0');
+    final m = dt.month.toString().padLeft(2, '0');
+    final y = dt.year.toString();
+    final h = dt.hour.toString().padLeft(2, '0');
+    final min = dt.minute.toString().padLeft(2, '0');
+    return '$d.$m.$y $h:$min';
+  }
 
   @override
   void initState() {
@@ -48,6 +58,25 @@ class _AddEditScreenState extends State<AddEditScreen> {
     setState(() => _tags.remove(tag));
   }
 
+  Future<void> _copyText() async {
+    final text = _textController.text.trim();
+    if (text.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: text));
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('Kopyalandı'),
+          backgroundColor: const Color(0xFF6B5C48),
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          duration: const Duration(seconds: 1),
+        ),
+      );
+    }
+  }
+
   Future<void> _save() async {
     if (_tagInputController.text.trim().isNotEmpty) {
       _addTag(_tagInputController.text);
@@ -63,6 +92,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
         id: DateTime.now().millisecondsSinceEpoch.toString(),
         text: text,
         tags: _tags,
+        date: DateTime.now(),
       );
       await _storage.addQuote(newQuote);
     }
@@ -72,12 +102,19 @@ class _AddEditScreenState extends State<AddEditScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final quoteDate = _isEditing ? widget.quote!.date : null;
+
     return Scaffold(
       appBar: AppBar(
         title: Text(_isEditing ? 'İncini dəyiş' : 'Yeni inci 🤍'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.check),
+            icon: const Icon(Icons.copy_outlined, color: Color(0xFF6B5C48)),
+            onPressed: _copyText,
+            tooltip: 'Kopyala',
+          ),
+          IconButton(
+            icon: const Icon(Icons.check, color: Color(0xFF6B5C48)),
             onPressed: _save,
           ),
         ],
@@ -87,6 +124,38 @@ class _AddEditScreenState extends State<AddEditScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            if (_isEditing && quoteDate != null) ...[
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 8,
+                ),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFF0EBE0),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.access_time_rounded,
+                      size: 14,
+                      color: Color(0xFFA0906E),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      _formatDate(quoteDate),
+                      style: const TextStyle(
+                        fontSize: 13,
+                        color: Color(0xFFA0906E),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+            ],
+
             const Text(
               '✨ İnci',
               style: TextStyle(
@@ -98,15 +167,13 @@ class _AddEditScreenState extends State<AddEditScreen> {
             const SizedBox(height: 8),
             TextField(
               controller: _textController,
-              maxLines: 6,
+              maxLines: 8,
               style: const TextStyle(
                 fontSize: 16,
                 color: Color(0xFF2E2418),
                 height: 1.6,
               ),
-              decoration: const InputDecoration(
-                hintText: 'İncini yaz...',
-              ),
+              decoration: const InputDecoration(hintText: 'İncini yaz...'),
             ),
             const SizedBox(height: 24),
             const Text(
@@ -132,22 +199,26 @@ class _AddEditScreenState extends State<AddEditScreen> {
                       spacing: 8,
                       runSpacing: 8,
                       children: _tags
-                          .map((tag) => Chip(
-                                label: Text('#$tag'),
-                                deleteIcon: const Icon(Icons.close, size: 14),
-                                onDeleted: () => _removeTag(tag),
-                                deleteIconColor: const Color(0xFF6B5C48),
-                                backgroundColor: const Color(0xFFE8E0D0),
-                                labelStyle: const TextStyle(
-                                  color: Color(0xFF6B5C48),
-                                  fontSize: 13,
-                                ),
-                                side: BorderSide.none,
-                                materialTapTargetSize:
-                                    MaterialTapTargetSize.shrinkWrap,
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 4, vertical: 0),
-                              ))
+                          .map(
+                            (tag) => Chip(
+                              label: Text('#$tag'),
+                              deleteIcon: const Icon(Icons.close, size: 14),
+                              onDeleted: () => _removeTag(tag),
+                              deleteIconColor: const Color(0xFF6B5C48),
+                              backgroundColor: const Color(0xFFE8E0D0),
+                              labelStyle: const TextStyle(
+                                color: Color(0xFF6B5C48),
+                                fontSize: 13,
+                              ),
+                              side: BorderSide.none,
+                              materialTapTargetSize:
+                                  MaterialTapTargetSize.shrinkWrap,
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 4,
+                                vertical: 0,
+                              ),
+                            ),
+                          )
                           .toList(),
                     ),
                     const SizedBox(height: 8),
