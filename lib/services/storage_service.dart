@@ -1,8 +1,13 @@
+import 'dart:convert';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart' as p;
 import '../models/quote.dart';
 
 class StorageService {
+  static final StorageService _instance = StorageService._internal();
+  factory StorageService() => _instance;
+  StorageService._internal();
+
   static Database? _db;
 
   Future<Database> get _database async {
@@ -14,7 +19,6 @@ class StorageService {
   Future<Database> _initDb() async {
     final dbPath = await getDatabasesPath();
     final path = p.join(dbPath, 'pearls.db');
-
     return await openDatabase(
       path,
       version: 1,
@@ -77,7 +81,7 @@ class StorageService {
       'quotes',
       {
         'text': updated.text,
-        'tags': updated.tags.join(','),
+        'tags': jsonEncode(updated.tags),
         'isFavourite': updated.isFavourite ? 1 : 0,
         'date': updated.date?.toIso8601String(),
       },
@@ -86,11 +90,16 @@ class StorageService {
     );
   }
 
+  Future<void> deleteQuote(String id) async {
+    final db = await _database;
+    await db.delete('quotes', where: 'id = ?', whereArgs: [id]);
+  }
+
   Map<String, dynamic> _toDbMap(Quote q, int order) {
     return {
       'id': q.id,
       'text': q.text,
-      'tags': q.tags.join(','),
+      'tags': jsonEncode(q.tags),
       'isFavourite': q.isFavourite ? 1 : 0,
       'date': q.date?.toIso8601String(),
       'rowOrder': order,
@@ -101,9 +110,7 @@ class StorageService {
     return Quote(
       id: map['id'] as String,
       text: map['text'] as String,
-      tags: (map['tags'] as String).isEmpty
-          ? []
-          : (map['tags'] as String).split(','),
+      tags: Quote.parseTags(map['tags'] as String? ?? ''),
       isFavourite: (map['isFavourite'] as int) == 1,
       date: map['date'] != null
           ? DateTime.tryParse(map['date'] as String)

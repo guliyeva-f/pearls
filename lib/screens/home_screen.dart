@@ -1,5 +1,6 @@
 import 'dart:math';
 import 'package:flutter/material.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../models/quote.dart';
 import '../services/storage_service.dart';
 import '../services/export_import_service.dart';
@@ -27,7 +28,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
-    _loadQuotes();
+    _init();
   }
 
   @override
@@ -36,15 +37,38 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
+  Future<void> _init() async {
+    await _loadQuotes();
+    await _checkDailyQuote();
+  }
+
   Future<void> _loadQuotes() async {
-    final quotes = await _storage.loadQuotes();
-    setState(() => _quotes = quotes);
-    if (!_hasShownDailyQuote && quotes.isNotEmpty && mounted) {
-      _hasShownDailyQuote = true;
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        _showDailyQuoteDialog();
-      });
+    try {
+      final quotes = await _storage.loadQuotes();
+      if (!mounted) return;
+      setState(() => _quotes = quotes);
+    } catch (_) {
+      if (!mounted) return;
+      _showErrorSnack('Məlumatları yükləyərkən xəta baş verdi');
     }
+  }
+
+  Future<void> _checkDailyQuote() async {
+    if (_hasShownDailyQuote || _quotes.isEmpty || !mounted) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final lastDate = prefs.getString('dailyQuoteDate') ?? '';
+      final today = DateTime.now();
+      final todayStr =
+          '${today.year}-${today.month.toString().padLeft(2, '0')}-${today.day.toString().padLeft(2, '0')}';
+      if (lastDate != todayStr) {
+        _hasShownDailyQuote = true;
+        await prefs.setString('dailyQuoteDate', todayStr);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted) _showDailyQuoteDialog();
+        });
+      }
+    } catch (_) {}
   }
 
   Map<String, int> get _tagCounts {
@@ -76,24 +100,98 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _toggleFavourite(Quote quote) async {
     final updated = quote.copyWith(isFavourite: !quote.isFavourite);
-    await _storage.updateQuote(updated);
-    _loadQuotes();
+    try {
+      await _storage.updateQuote(updated);
+      if (!mounted) return;
+      setState(() {
+        final idx = _quotes.indexWhere((q) => q.id == quote.id);
+        if (idx != -1) _quotes[idx] = updated;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      _showErrorSnack('Xəta baş verdi');
+    }
+  }
+
+  Future<void> _deleteQuote(String id) async {
+    setState(() => _quotes.removeWhere((q) => q.id == id));
+    try {
+      await _storage.deleteQuote(id);
+    } catch (_) {
+      _loadQuotes();
+    }
+  }
+
+  Future<bool> _confirmDelete() async {
+    return await showDialog<bool>(
+          context: context,
+          builder: (ctx) => AlertDialog(
+            backgroundColor: const Color(0xFFFAF7F2),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(20),
+            ),
+            title: const Text(
+              'Silinsin?',
+              style: TextStyle(
+                color: Color(0xFF3A2E1E),
+                fontSize: 18,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, false),
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFF6B5C48),
+                ),
+                child: const Text('Ləğv et'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(ctx, true),
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFFC9785A),
+                ),
+                child: const Text('Sil'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
   }
 
   Future<void> _exportQuotes() async {
-    await _exportImport.exportQuotes(_quotes);
+    try {
+      await _exportImport.exportQuotes(_quotes);
+    } catch (_) {
+      if (!mounted) return;
+      _showErrorSnack('Export zamanı xəta baş verdi');
+    }
   }
 
   Future<void> _importQuotes() async {
-    final imported = await _exportImport.importQuotes();
-    if (imported.isEmpty) return;
-    await _storage.addQuotes(imported);
-    _loadQuotes();
+    try {
+      final imported = await _exportImport.importQuotes();
+      if (imported.isEmpty) return;
+      await _storage.addQuotes(imported);
+      await _loadQuotes();
+    } catch (_) {
+      if (!mounted) return;
+      _showErrorSnack('Import zamanı xəta baş verdi');
+    }
   }
 
-  void _startSearch() {
-    setState(() => _isSearching = true);
+  void _showErrorSnack(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: Colors.red[700],
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      ),
+    );
   }
+
+  void _startSearch() => setState(() => _isSearching = true);
 
   void _stopSearch() {
     setState(() {
@@ -254,7 +352,6 @@ class _HomeScreenState extends State<HomeScreen> {
                                   Icon(
                                     Icons.shuffle_rounded,
                                     size: 16,
-                                    fontWeight: FontWeight.w600,
                                     color: Color(0xFF6B5C48),
                                   ),
                                   SizedBox(width: 6),
@@ -290,31 +387,19 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Widget _buildChip(String label, bool selected, VoidCallback onTap) {
+  Widget _buildFilterChip(
+    String label,
+    bool selected,
+    VoidCallback onTap, {
+    bool compact = true,
+  }) {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: selected ? const Color(0xFF6B5C48) : const Color(0xFFE8E0D0),
-          borderRadius: BorderRadius.circular(20),
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 12 : 14,
+          vertical: compact ? 6 : 8,
         ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 14,
-            color: selected ? const Color(0xFFFAF7F2) : const Color(0xFF6B5C48),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSheetChip(String label, bool selected, VoidCallback onTap) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
         decoration: BoxDecoration(
           color: selected ? const Color(0xFF6B5C48) : const Color(0xFFE8E0D0),
           borderRadius: BorderRadius.circular(20),
@@ -373,7 +458,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         spacing: 8,
                         runSpacing: 10,
                         children: [
-                          _buildSheetChip(
+                          _buildFilterChip(
                             'Hamısı (${_quotes.length})',
                             _selectedTag == null && !_showFavourites,
                             () {
@@ -383,9 +468,10 @@ class _HomeScreenState extends State<HomeScreen> {
                               });
                               Navigator.pop(context);
                             },
+                            compact: false,
                           ),
                           ...tagCounts.entries.map(
-                            (e) => _buildSheetChip(
+                            (e) => _buildFilterChip(
                               '#${e.key} (${e.value})',
                               _selectedTag == e.key,
                               () {
@@ -396,6 +482,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 });
                                 Navigator.pop(context);
                               },
+                              compact: false,
                             ),
                           ),
                         ],
@@ -484,7 +571,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 scrollDirection: Axis.horizontal,
                 child: Row(
                   children: [
-                    _buildChip(
+                    _buildFilterChip(
                       'Hamısı (${_quotes.length})',
                       _selectedTag == null && !_showFavourites,
                       () => setState(() {
@@ -495,7 +582,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ...topTags.map(
                       (e) => Padding(
                         padding: const EdgeInsets.only(left: 8),
-                        child: _buildChip(
+                        child: _buildFilterChip(
                           '#${e.key} (${e.value})',
                           _selectedTag == e.key,
                           () => setState(() {
@@ -583,64 +670,95 @@ class _HomeScreenState extends State<HomeScreen> {
                         },
                         child: Padding(
                           padding: const EdgeInsets.symmetric(vertical: 16),
-                          child: Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
+                          child: Stack(
                             children: [
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    _buildHighlightedText(
-                                      quote.text,
-                                      highlightQuery,
-                                      const TextStyle(
-                                        fontSize: 16,
-                                        color: Color(0xFF2E2418),
-                                        height: 1.5,
-                                      ),
-                                    ),
-                                    if (quote.tags.isNotEmpty) ...[
-                                      const SizedBox(height: 8),
-                                      Wrap(
-                                        spacing: 6,
-                                        children: quote.tags.map((t) {
-                                          final isTagMatch =
-                                              highlightQuery.isNotEmpty &&
-                                              t.toLowerCase().contains(
-                                                highlightQuery.toLowerCase(),
+                              Row(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Expanded(
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      children: [
+                                        _buildHighlightedText(
+                                          quote.text,
+                                          highlightQuery,
+                                          const TextStyle(
+                                            fontSize: 16,
+                                            color: Color(0xFF2E2418),
+                                            height: 1.5,
+                                          ),
+                                        ),
+                                        if (quote.tags.isNotEmpty) ...[
+                                          const SizedBox(height: 8),
+                                          Wrap(
+                                            spacing: 6,
+                                            children: quote.tags.map((t) {
+                                              final isTagMatch =
+                                                  highlightQuery.isNotEmpty &&
+                                                  t.toLowerCase().contains(
+                                                    highlightQuery
+                                                        .toLowerCase(),
+                                                  );
+                                              return Text(
+                                                '#$t',
+                                                style: TextStyle(
+                                                  fontSize: 12,
+                                                  color: const Color(
+                                                    0xFFA0906E,
+                                                  ),
+                                                  backgroundColor: isTagMatch
+                                                      ? const Color(
+                                                          0xFFDEB96A,
+                                                        ).withValues(
+                                                          alpha: 0.35,
+                                                        )
+                                                      : null,
+                                                  fontWeight: isTagMatch
+                                                      ? FontWeight.w600
+                                                      : FontWeight.normal,
+                                                ),
                                               );
-                                          return Text(
-                                            '#$t',
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              color: const Color(0xFFA0906E),
-                                              backgroundColor: isTagMatch
-                                                  ? const Color(
-                                                      0xFFDEB96A,
-                                                    ).withValues(alpha: 0.35)
-                                                  : null,
-                                              fontWeight: isTagMatch
-                                                  ? FontWeight.w600
-                                                  : FontWeight.normal,
-                                            ),
-                                          );
-                                        }).toList(),
-                                      ),
-                                    ],
-                                  ],
+                                            }).toList(),
+                                          ),
+                                        ],
+                                      ],
+                                    ),
+                                  ),
+                                  const SizedBox(width: 40),
+                                ],
+                              ),
+                              Positioned(
+                                top: 0,
+                                right: 0,
+                                child: GestureDetector(
+                                  onTap: () => _toggleFavourite(quote),
+                                  child: Icon(
+                                    quote.isFavourite
+                                        ? Icons.favorite
+                                        : Icons.favorite_border,
+                                    size: 20,
+                                    color: quote.isFavourite
+                                        ? const Color(0xFFC9785A)
+                                        : const Color(0xFFC4B49E),
+                                  ),
                                 ),
                               ),
-                              const SizedBox(width: 12),
-                              GestureDetector(
-                                onTap: () => _toggleFavourite(quote),
-                                child: Icon(
-                                  quote.isFavourite
-                                      ? Icons.favorite
-                                      : Icons.favorite_border,
-                                  size: 20,
-                                  color: quote.isFavourite
-                                      ? const Color(0xFFC9785A)
-                                      : const Color(0xFFC4B49E),
+                              Positioned(
+                                bottom: 0,
+                                right: 0,
+                                child: GestureDetector(
+                                  onTap: () async {
+                                    final confirmed = await _confirmDelete();
+                                    if (confirmed) {
+                                      _deleteQuote(quote.id);
+                                    }
+                                  },
+                                  child: const Icon(
+                                    Icons.delete_outline_rounded,
+                                    size: 20,
+                                    color: Color(0xFFA0906E),
+                                  ),
                                 ),
                               ),
                             ],
@@ -658,7 +776,7 @@ class _HomeScreenState extends State<HomeScreen> {
           FloatingActionButton(
             heroTag: 'daily',
             onPressed: _showDailyQuoteDialog,
-            backgroundColor: const Color(0xFFC9785A),
+            backgroundColor: const Color.fromARGB(255, 170, 68, 55),
             foregroundColor: const Color(0xFF6B5C48),
             elevation: 2,
             child: const Text('✨', style: TextStyle(fontSize: 20)),

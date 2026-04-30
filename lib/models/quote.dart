@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 class Quote {
   final String id;
   final String text;
@@ -32,7 +34,7 @@ class Quote {
     return {
       'id': id,
       'text': text,
-      'tags': tags.join(','),
+      'tags': jsonEncode(tags),
       'isFavourite': isFavourite,
       'date': date?.toIso8601String(),
     };
@@ -42,13 +44,24 @@ class Quote {
     return Quote(
       id: map['id'] as String,
       text: map['text'] as String,
-      tags: (map['tags'] as String).isEmpty
-          ? []
-          : (map['tags'] as String).split(','),
+      tags: _parseTags(map['tags'] as String? ?? ''),
       isFavourite: map['isFavourite'] as bool? ?? false,
       date: map['date'] != null
           ? DateTime.tryParse(map['date'] as String)
           : null,
     );
+  }
+
+  static List<String> parseTags(String raw) => _parseTags(raw);
+
+  static List<String> _parseTags(String raw) {
+    if (raw.isEmpty) return [];
+    if (raw.startsWith('[')) {
+      try {
+        final decoded = jsonDecode(raw) as List<dynamic>;
+        return decoded.map((e) => e.toString()).toList();
+      } catch (_) {}
+    }
+    return raw.split(',').where((t) => t.isNotEmpty).toList();
   }
 }

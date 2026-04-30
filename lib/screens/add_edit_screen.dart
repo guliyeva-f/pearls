@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:uuid/uuid.dart';
 import '../models/quote.dart';
 import '../services/storage_service.dart';
+import '../utils/date_formatter.dart';
 
 class AddEditScreen extends StatefulWidget {
   final Quote? quote;
@@ -16,19 +18,11 @@ class _AddEditScreenState extends State<AddEditScreen> {
   final StorageService _storage = StorageService();
   final TextEditingController _textController = TextEditingController();
   final TextEditingController _tagInputController = TextEditingController();
+  static const _uuid = Uuid();
 
   List<String> _tags = [];
 
   bool get _isEditing => widget.quote != null;
-
-  String _formatDate(DateTime dt) {
-    final d = dt.day.toString().padLeft(2, '0');
-    final m = dt.month.toString().padLeft(2, '0');
-    final y = dt.year.toString();
-    final h = dt.hour.toString().padLeft(2, '0');
-    final min = dt.minute.toString().padLeft(2, '0');
-    return '$d.$m.$y $h:$min';
-  }
 
   @override
   void initState() {
@@ -47,7 +41,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
   }
 
   void _addTag(String input) {
-    final tag = input.trim().replaceAll('#', '').trim();
+    final tag = input.trim().replaceAll('#', '').replaceAll(',', '').trim();
     if (tag.isNotEmpty && !_tags.contains(tag)) {
       setState(() => _tags.add(tag));
     }
@@ -63,11 +57,16 @@ class _AddEditScreenState extends State<AddEditScreen> {
     if (text.isEmpty) return;
     await Clipboard.setData(ClipboardData(text: text));
     if (mounted) {
+      const message = 'Kopyalandı';
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: const Text('Kopyalandı'),
+          content: const Text(
+            message,
+            textAlign: TextAlign.center,
+          ),
           backgroundColor: const Color(0xFF6B5C48),
           behavior: SnackBarBehavior.floating,
+          width: _snackBarWidth(context, message),
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(12),
           ),
@@ -77,6 +76,19 @@ class _AddEditScreenState extends State<AddEditScreen> {
     }
   }
 
+  double _snackBarWidth(BuildContext context, String message) {
+    const textStyle = TextStyle(fontSize: 14);
+    final textPainter = TextPainter(
+      text: TextSpan(text: message, style: textStyle),
+      maxLines: 1,
+      textDirection: TextDirection.ltr,
+    )..layout();
+
+    final calculatedWidth = textPainter.width + 48; 
+    final maxWidth = MediaQuery.of(context).size.width - 40;
+    return calculatedWidth.clamp(0, maxWidth);
+  }
+
   Future<void> _save() async {
     if (_tagInputController.text.trim().isNotEmpty) {
       _addTag(_tagInputController.text);
@@ -84,20 +96,34 @@ class _AddEditScreenState extends State<AddEditScreen> {
     final text = _textController.text.trim();
     if (text.isEmpty) return;
 
-    if (_isEditing) {
-      final updated = widget.quote!.copyWith(text: text, tags: _tags);
-      await _storage.updateQuote(updated);
-    } else {
-      final newQuote = Quote(
-        id: DateTime.now().millisecondsSinceEpoch.toString(),
-        text: text,
-        tags: _tags,
-        date: DateTime.now(),
-      );
-      await _storage.addQuote(newQuote);
+    try {
+      if (_isEditing) {
+        final updated = widget.quote!.copyWith(text: text, tags: _tags);
+        await _storage.updateQuote(updated);
+      } else {
+        final newQuote = Quote(
+          id: _uuid.v4(),
+          text: text,
+          tags: _tags,
+          date: DateTime.now(),
+        );
+        await _storage.addQuote(newQuote);
+      }
+      if (mounted) Navigator.pop(context);
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('Xəta baş verdi, yenidən cəhd edin'),
+            backgroundColor: Colors.red[700],
+            behavior: SnackBarBehavior.floating,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+            ),
+          ),
+        );
+      }
     }
-
-    if (mounted) Navigator.pop(context);
   }
 
   @override
@@ -144,7 +170,7 @@ class _AddEditScreenState extends State<AddEditScreen> {
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      _formatDate(quoteDate),
+                      DateFormatter.format(quoteDate),
                       style: const TextStyle(
                         fontSize: 13,
                         color: Color(0xFFA0906E),
@@ -155,7 +181,6 @@ class _AddEditScreenState extends State<AddEditScreen> {
               ),
               const SizedBox(height: 20),
             ],
-
             const Text(
               '✨ İnci',
               style: TextStyle(

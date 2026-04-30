@@ -2,43 +2,19 @@ import 'dart:io';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:uuid/uuid.dart';
 import '../models/quote.dart';
+import '../utils/date_formatter.dart';
 
 class ExportImportService {
-  String _formatDate(DateTime dt) {
-    final d = dt.day.toString().padLeft(2, '0');
-    final m = dt.month.toString().padLeft(2, '0');
-    final y = dt.year.toString();
-    final h = dt.hour.toString().padLeft(2, '0');
-    final min = dt.minute.toString().padLeft(2, '0');
-    return '[$d.$m.$y $h:$min]';
-  }
-
-  DateTime? _parseDateStr(String dateStr) {
-    try {
-      final parts = dateStr.split(' ');
-      if (parts.length != 2) return null;
-      final dateParts = parts[0].split('.');
-      final timeParts = parts[1].split(':');
-      if (dateParts.length != 3 || timeParts.length != 2) return null;
-      return DateTime(
-        int.parse(dateParts[2]),
-        int.parse(dateParts[1]),
-        int.parse(dateParts[0]),
-        int.parse(timeParts[0]),
-        int.parse(timeParts[1]),
-      );
-    } catch (_) {
-      return null;
-    }
-  }
+  static const _uuid = Uuid();
 
   Future<void> exportQuotes(List<Quote> quotes) async {
     final buffer = StringBuffer();
     final ordered = quotes.reversed.toList();
     for (final quote in ordered) {
       final date = quote.date ?? DateTime.now();
-      buffer.writeln(_formatDate(date));
+      buffer.writeln(DateFormatter.formatForExport(date));
       buffer.writeln(quote.text);
       buffer.writeln();
       if (quote.tags.isNotEmpty) {
@@ -51,6 +27,10 @@ class ExportImportService {
     final file = File('${dir.path}/pearls_backup.txt');
     await file.writeAsString(buffer.toString());
     await Share.shareXFiles([XFile(file.path)]);
+
+    try {
+      await file.delete();
+    } catch (_) {}
   }
 
   Future<List<Quote>> importQuotes() async {
@@ -58,13 +38,10 @@ class ExportImportService {
       type: FileType.custom,
       allowedExtensions: ['txt'],
     );
-
     if (result == null) return [];
-
     final path = result.files.single.path;
     if (path == null) return [];
-    final file = File(path);
-    final content = await file.readAsString();
+    final content = await File(path).readAsString();
     return _parseTxt(content);
   }
 
@@ -72,7 +49,6 @@ class ExportImportService {
     final quotes = <Quote>[];
     final datePattern = RegExp(r'\[(\d{2}\.\d{2}\.\d{4} \d{2}:\d{2})\]');
     final matches = datePattern.allMatches(content).toList();
-
     if (matches.isEmpty) return [];
 
     for (int i = 0; i < matches.length; i++) {
@@ -98,7 +74,7 @@ class ExportImportService {
         tags = tagLine
             .split(' ')
             .where((t) => t.startsWith('#') && t.length > 1)
-            .map((t) => t.substring(1))
+            .map((t) => t.substring(1).replaceAll(',', ''))
             .toList();
       }
 
@@ -106,10 +82,10 @@ class ExportImportService {
 
       quotes.add(
         Quote(
-          id: '${DateTime.now().millisecondsSinceEpoch}${quotes.length}',
+          id: _uuid.v4(),
           text: text,
           tags: tags,
-          date: _parseDateStr(dateStr),
+          date: DateFormatter.parse(dateStr),
         ),
       );
     }
